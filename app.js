@@ -87,6 +87,7 @@ async function animateDie(result,token){
 }
 function render(){
   const legal=state.turn===0&&!busy?Ludo.legal(state):[];
+  const automatic=legal.length===1;
   const groups={};
   for(let p=0;p<2;p++)for(let i=0;i<4;i++){
     const v=state.pieces[p][i],pos=Ludo.location(p,i,v),key=pos.join(',');(groups[key]??=[]).push({p,i,v,pos});
@@ -113,14 +114,14 @@ function render(){
   $('turnlabel').textContent=state.phase==='done'?'PARTIE TERMINÉE':state.turn===0?'À TOI DE JOUER':'AU TOUR DE LA MACHINE';
   $('turnlabel').style.color=state.turn===0?'var(--coral)':'var(--purple)';
   $('dicevalue').textContent=busy?'Le dé tourne…':lastDice?.kind==='temptation'?`Tentation : ${displayedDie}`:state.dice?`Dé : ${state.dice}`:'Le prochain coup est entre tes mains.';
-  $('hint').textContent=state.phase==='done'?'Les quatre pions décident du gagnant.':state.phase==='select'&&state.turn===0?'Touche un pion entouré de jaune.':state.dice===6?'Un 6 donne un nouveau lancer.':'Un 6 pour sortir un pion.';
-  $('status').textContent=busy?(state.turn===0?'Le dé roule…':'La machine lance le dé…'):state.message;
+  $('hint').textContent=state.phase==='done'?'Les quatre pions décident du gagnant.':automatic?'Un seul choix : le pion joue automatiquement.':state.phase==='select'&&state.turn===0?'Touche un pion entouré de jaune.':state.dice===6?'Un 6 donne un nouveau lancer.':'Un 6 pour sortir un pion.';
+  $('status').textContent=busy?(state.turn===0?'Le dé roule…':'La machine lance le dé…'):automatic?`Seul le pion ${legal[0]+1} peut jouer : déplacement automatique.`:state.message;
   const canRoll=state.phase==='roll'&&state.turn===0&&!busy;
   $('roll').disabled=!canRoll;$('dice').disabled=!canRoll;
   $('dice').setAttribute('aria-label',canRoll?'Lancer le dé':`Résultat du dé : ${displayedDie}`);
   $('roll').hidden=state.phase==='done'||state.phase==='temptation'&&state.turn===0;
-  $('roll').textContent=busy?'Le dé roule…':state.turn===1?'La machine joue…':state.phase==='select'?'Choisis ton pion ↓':'Lancer le dé ↗';
-  $('choices').hidden=!legal.length;
+  $('roll').textContent=busy?'Le dé roule…':state.turn===1?'La machine joue…':automatic?'Déplacement automatique…':state.phase==='select'?'Choisis ton pion ↓':'Lancer le dé ↗';
+  $('choices').hidden=legal.length<2;
   $('choices').replaceChildren(...legal.map(i=>{const b=document.createElement('button');b.textContent=`Pion ${i+1}${state.pieces[0][i]===-1?' · sortir':' · avancer'}`;b.addEventListener('click',()=>humanMove(i));return b;}));
   const tempting=state.phase==='temptation'&&state.turn===0;
   $('temptation').hidden=!tempting;
@@ -152,8 +153,18 @@ function confetti(){if(matchMedia('(prefers-reduced-motion: reduce)').matches)re
 function modalOpen(){return $('rules').open||$('setup').open;}
 function scheduleBot(){
   clearTimeout(botTimer);
-  if(state.turn!==1||state.phase==='done'||busy||modalOpen())return;
+  if(state.phase==='done'||busy||modalOpen())return;
   const token=epoch;
+  if(state.turn===0){
+    if(Ludo.legal(state).length===1){
+      botTimer=setTimeout(()=>{
+        if(token!==epoch||busy||modalOpen()||state.turn!==0)return;
+        const choices=Ludo.legal(state);
+        if(choices.length===1)humanMove(choices[0]);
+      },280);
+    }
+    return;
+  }
   botTimer=setTimeout(()=>{
     if(token!==epoch||modalOpen())return;
     if(state.phase==='roll')rollDice();
