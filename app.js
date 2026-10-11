@@ -62,6 +62,29 @@ function drawBoard(){
 }
 const PIPS={1:[4],2:[0,8],3:[0,4,8],4:[0,2,6,8],5:[0,2,4,6,8],6:[0,2,3,5,6,8]};
 function setPips(n){$('pips').replaceChildren(...Array.from({length:9},(_,i)=>{const e=document.createElement('i');e.className='pip'+(PIPS[n].includes(i)?'':' empty');return e;}));}
+async function animateDie(result,token){
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const duration=reduced?360:960;
+  const dice=$('dice');
+  dice.classList.remove('revealed');dice.classList.add('rolling');
+  dice.setAttribute('aria-label','Le dé tourne…');
+  let frame=0;
+  const faces=setInterval(()=>{
+    if(token!==epoch){clearInterval(faces);return;}
+    setPips(frame%6+1);frame++;
+  },90);
+  await new Promise(r=>setTimeout(r,duration));
+  clearInterval(faces);
+  if(token!==epoch)return false;
+  dice.classList.remove('rolling');dice.classList.add('revealed');
+  setPips(result);$('dicevalue').textContent=`Dé : ${result}`;
+  $('hint').textContent='Résultat du lancer';
+  dice.setAttribute('aria-label',`Résultat du dé : ${result}`);
+  await new Promise(r=>setTimeout(r,220));
+  if(token!==epoch)return false;
+  dice.classList.remove('revealed');
+  return true;
+}
 function render(){
   const legal=state.turn===0&&!busy?Ludo.legal(state):[];
   const groups={};
@@ -84,14 +107,17 @@ function render(){
     $('home'+p).textContent=`${state.pieces[p].filter(v=>v===56).length} / 4 arrivés`;
     $('score'+p).textContent=state.score[p];
   }
-  setPips(state.dice||6);
+  const lastDice=state.lastDice;
+  const displayedDie=lastDice&&PIPS[lastDice.value]?lastDice.value:state.dice||6;
+  setPips(displayedDie);
   $('turnlabel').textContent=state.phase==='done'?'PARTIE TERMINÉE':state.turn===0?'À TOI DE JOUER':'AU TOUR DE LA MACHINE';
   $('turnlabel').style.color=state.turn===0?'var(--coral)':'var(--purple)';
-  $('dicevalue').textContent=state.dice?`Dé : ${state.dice}`:'Le prochain coup est entre tes mains.';
+  $('dicevalue').textContent=busy?'Le dé tourne…':lastDice?.kind==='temptation'?`Tentation : ${displayedDie}`:state.dice?`Dé : ${state.dice}`:'Le prochain coup est entre tes mains.';
   $('hint').textContent=state.phase==='done'?'Les quatre pions décident du gagnant.':state.phase==='select'&&state.turn===0?'Touche un pion entouré de jaune.':state.dice===6?'Un 6 donne un nouveau lancer.':'Un 6 pour sortir un pion.';
   $('status').textContent=busy?(state.turn===0?'Le dé roule…':'La machine lance le dé…'):state.message;
   const canRoll=state.phase==='roll'&&state.turn===0&&!busy;
   $('roll').disabled=!canRoll;$('dice').disabled=!canRoll;
+  $('dice').setAttribute('aria-label',canRoll?'Lancer le dé':`Résultat du dé : ${displayedDie}`);
   $('roll').hidden=state.phase==='done'||state.phase==='temptation'&&state.turn===0;
   $('roll').textContent=busy?'Le dé roule…':state.turn===1?'La machine joue…':state.phase==='select'?'Choisis ton pion ↓':'Lancer le dé ↗';
   $('choices').hidden=!legal.length;
@@ -133,23 +159,23 @@ function scheduleBot(){
     if(state.phase==='roll')rollDice();
     else if(state.phase==='select'){
       const i=Ludo.chooseBot(state,()=>getDie()/7);if(i!==null){const prev=state.score[1];Ludo.move(state,i);sound(state.phase==='temptation'||state.score[1]>prev?'capture':'move');afterAction();}
-    }else if(state.phase==='temptation'){Ludo.resolve(state,getDie()<=2,getDie());afterAction();}
+    }else if(state.phase==='temptation'){applyTemptation(getDie()<=2);}
   },state.phase==='select'?620:state.phase==='temptation'?1000:800);
 }
 async function rollDice(){
   if(busy||state.phase!=='roll'||modalOpen())return;
-  const token=epoch;busy=true;render();$('dice').classList.add('rolling');sound('move');
-  await new Promise(r=>setTimeout(r,420));
-  if(token!==epoch)return;
-  $('dice').classList.remove('rolling');busy=false;Ludo.roll(state,getDie());afterAction();
+  const token=epoch,result=getDie();busy=true;render();sound('move');
+  if(!await animateDie(result,token))return;
+  busy=false;Ludo.roll(state,result);state.lastDice={kind:'move',value:result};afterAction();
 }
 function humanMove(i){if(busy||state.turn!==0||state.phase!=='select'||modalOpen())return;const old=state.score[0];if(Ludo.move(state,i)){sound(state.phase==='temptation'||state.score[0]>old?'capture':'move');afterAction();}}
-async function tempt(risk){
-  if(busy||state.turn!==0||state.phase!=='temptation'||modalOpen())return;
+function tempt(risk){if(state.turn===0)applyTemptation(risk);}
+async function applyTemptation(risk){
+  if(busy||state.phase!=='temptation'||modalOpen())return;
   const token=epoch;
-  if(risk){busy=true;render();$('dice').classList.add('rolling');sound('move');await new Promise(r=>setTimeout(r,420));if(token!==epoch)return;}
   const d=risk?getDie():null;
-  $('dice').classList.remove('rolling');busy=false;Ludo.resolve(state,risk,d);if(risk){state.message+=` (Le dé de tentation est indépendant du déplacement.)`;sound(d>=4?'capture':'loss');}else sound('move');afterAction();
+  if(risk){busy=true;render();sound('move');if(!await animateDie(d,token))return;}
+  busy=false;Ludo.resolve(state,risk,d);if(risk){state.lastDice={kind:'temptation',value:d};state.message+=` (Le dé de tentation est indépendant du déplacement.)`;sound(d>=4?'capture':'loss');}else sound('move');afterAction();
 }
 function openSetup(mode=state.mode){
   pendingMode=mode;pendingChampion=state.champion[0];
@@ -158,7 +184,7 @@ function openSetup(mode=state.mode){
   $('champions').hidden=mode!=='temptation';setChampion(pendingChampion);$('setup').showModal();clearTimeout(botTimer);
 }
 function setChampion(i){pendingChampion=i;document.querySelectorAll('[data-champion]').forEach(b=>{const selected=Number(b.dataset.champion)===i;b.classList.toggle('selected',selected);b.setAttribute('aria-pressed',selected);});}
-function start(){epoch++;clearTimeout(botTimer);busy=false;$('dice').classList.remove('rolling');state=Ludo.create(pendingMode,pendingChampion,getDie()%4);$('setup').close();save();render();sound('move');}
+function start(){epoch++;clearTimeout(botTimer);busy=false;$('dice').classList.remove('rolling','revealed');state=Ludo.create(pendingMode,pendingChampion,getDie()%4);$('setup').close();save();render();sound('move');}
 $('roll').addEventListener('click',rollDice);$('dice').addEventListener('click',rollDice);
 $('bank').addEventListener('click',()=>tempt(false));$('risk').addEventListener('click',()=>tempt(true));
 $('newgame').addEventListener('click',()=>openSetup());$('replay').addEventListener('click',()=>openSetup());
